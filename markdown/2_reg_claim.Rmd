@@ -1,0 +1,366 @@
+---
+title: "2_Reg_claim"
+author: 'NO'
+date: "05/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Individual Claims Regression 
+
+```{r library}
+library(corrplot)
+library(gridExtra)
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(knitr)
+library(DT)
+library(pals)
+library(splines)
+library(MASS)
+```
+
+## Loading Data 
+```{r get data }
+df_claims = read.csv("../data/14OURE-PG_2017_CLAIMS_YEAR0.csv")
+df_year0 = read.csv("../data/14OURE-PG_2017_YEAR0.csv")
+df_year1 = read.csv("../data/14OURE-PG_2017_YEAR1.csv")
+
+
+df_regions = read.csv("../data/departements_francais.csv", sep = ";") %>% dplyr::select(NUMERO, REGION, "DENSITE..habitants.km2.")
+
+df_year0 = df_year0 %>% mutate(NUMERO = substr(df_year0$pol_insee_code,1,2))
+df_year0 = left_join(df_year0, df_regions, by = "NUMERO" )
+
+df_year0$DENSITE..habitants.km2. <- as.numeric(gsub(",", ".", df_year0$DENSITE..habitants.km2.)) #convert density to numeric
+names(df_year0)[names(df_year0)=="DENSITE..habitants.km2."] <- 'density'
+```
+
+```{r preprocess claim}
+df_claims_0 = df_claims[(df_claims$claim_amount >= 0),]
+
+# create final merged df
+df = left_join(df_year0, df_claims_0, by = c("id_policy")) %>%
+  mutate(claim_nb = ifelse(is.na(claim_nb), 0, claim_nb), claim_amount=ifelse(is.na(claim_amount), 0, claim_amount)) 
+
+df <-  df[df$claim_amount > 0,] #keep individuals claims for modelisation
+```
+
+## Categorize variables 
+```{r categorize }
+
+df$drv_age1G <- cut(df$drv_age1, c(17, 2:8*10, max(df$drv_age1)))
+df$drv_age2G <- cut(df$drv_age1, c(17, 25, 45,max(df$drv_age1)))
+
+df$vh_ageG <- cut(df$vh_age, c(0, 10, 25, 30, 100))#no vehicle with age 0, min value is 1 in the dataset
+df$vh_valueG = cut(df$vh_value, c(min(df$vh_value), 8000, 15000, 22000, max(df$vh_value)), include.lowest = TRUE)
+df$vh_dinG = cut(df$vh_din, c(min(df$vh_din), 50, 220, max(df$vh_din)), include.lowest = TRUE)
+df$vh_makeG = ifelse(df$vh_make %in% c("RENAULT", "NISSAN", "CITROEN"), "A", 
+                              ifelse(df$vh_make %in% c("VOLKSWAGEN", "AUDI", "SKODA", "SEAT"), "B",
+                              ifelse(df$vh_make %in% c("OPEL", "GENERAL MOTORS", "FORD"), "C",
+                              ifelse(df$vh_make %in% c("FIAT"), "D",
+                              ifelse(df$vh_make %in% c("MERCEDES BENZ", "BMW", "CITROEN"), "E", "G")))))
+
+
+df$densityG<- cut(df$density,c(0,40,200,500,4500,Inf),
+include.lowest = TRUE)
+
+df$pol_bonusG = cut(df$pol_bonus, c(0.5, 0.9, 1.2, 1.4, max(df$pol_bonus)), include.lowest = TRUE)
+df$pol_durationG = cut(df$pol_duration, c(min(df$pol_duration),10, 20,25,30, max(df$pol_duration)), include.lowest = TRUE)
+
+df$pol_coverageG = ifelse(df$pol_coverage %in% c("Median1", "Median2"), "Median", df$pol_coverage)
+
+var <-c("drv_age1","drv_age1G","drv_age2G" ,"vh_ageG", "vh_age" , "vh_valueG", "vh_value" ,"vh_din", "vh_dinG","vh_type", "vh_fuel", "vh_makeG", "densityG","density","pol_bonus", "pol_bonusG" ,"pol_durationG", "pol_coverageG", "claim_amount") 
+#keep features we worked on andh the original for some continous ones
+df <- df[var]
+
+```
+
+## Claims regression
+
+```{r log normal}
+formula = log(claim_amount)~drv_age2G + vh_ageG +vh_valueG + vh_dinG +vh_makeG + densityG + pol_bonusG + pol_durationG +pol_coverageG + vh_type + vh_fuel
+reg.logn <- lm(formula ,data=df)#[df$claim_amount<15000,]
+
+summary(reg.logn)
+```
+
+
+```{r gamma reg}
+formula <-  claim_amount ~drv_age2G + vh_ageG +vh_valueG + vh_dinG +vh_makeG + densityG + pol_bonusG + pol_durationG +pol_coverageG + vh_type + vh_fuel
+
+reg.gamma <- glm(formula,family=Gamma(link="log"),data=df[df$claim_amount<15000,])#focus on subset 
+summary(reg.gamma)
+```
+
+```{r inverse gaussian model, warning=FALSE}
+reg.invgaus <- glm(formula ,family=inverse.gaussian(link="1/mu^2"),data=df[df$claim_amount<15000,])
+summary(reg.invgaus)
+```
+
+```{r mean prediction on subset}
+mean(df[df$claim_amount<15000, 'claim_amount']) #empirical mean
+sigma <- summary(reg.logn)$sigma
+mean(exp(predict(reg.logn))*exp(sigma^2/2)) #mean for log normal
+mean(predict(reg.gamma,type="response")) #mean gamma
+mean(predict(reg.invgaus,type="response"))# mean inverse gaussian
+```
+
+## Differentiating large claims
+```{r differentiation}
+
+ordered_claim <- df[order(-df$claim_amount),c("claim_amount","drv_age1","vh_age","vh_value","vh_fuel","density")]
+ordered_claim$aggamount <-cumsum(ordered_claim$claim_amount)/sum(ordered_claim$claim_amount)*100
+ordered_claim$aggnb <- (1:length(df$claim_amount))/length(df$claim_amount) * 100
+
+#ordered_claim[ordered_claim$aggnb >= 2.5,c('claim_amount','aggamount', 'aggnb')] # 57 sinistres comptent pour 10% des montants totaux ! 
+
+print(tail(ordered_claim[ordered_claim$claim_amount >= 6000,c('claim_amount','aggamount', 'aggnb')]))
+```
+Nous avons constaté par une étude descriptive que seulement 5% des sinsitres représentaient près de 40% de la charge sinistre totale.
+Nous choisissons un niveau de séparation de 6000€. Les sinistres supérieurs à ce montant représentent alors 2.46% des sinistres de la base ainsi que 25.5% de la charge sinistre totale. 
+
+### Ecrêtement 
+```{r encrêtement }
+u <- 20000 #valeur de séparation
+
+
+su<- sum(ifelse(df$claim_amount - u > 0, df$claim_amount - u, 0))/length(df$claim_amount) #charge surcrête moyenne
+df$surcrete <- ifelse (df$claim_amount<u, df$claim_amount, u) + su
+
+summary(df$surcrete)
+```
+
+Nous pouvons maintenant proposer une modélisation pour les nouveaux montants encrếtés.
+```{r, warning=FALSE}
+
+formula <-  surcrete ~drv_age2G + vh_ageG +vh_valueG + vh_dinG +vh_makeG + densityG + pol_bonusG + pol_durationG +pol_coverageG + vh_type + vh_fuel
+
+reg.logn <- lm(log(surcrete)~drv_age1 + vh_ageG +vh_value + pol_durationG ,data=df)
+summary(reg.logn)
+
+reg.gamma <- glm(surcrete~drv_age1 + vh_ageG +vh_value + pol_durationG  ,family=Gamma(link="log"),data=df)
+summary(reg.gamma)
+
+reg.invgaus <- glm(surcrete~drv_age1 + vh_ageG +vh_value + pol_durationG  ,family=inverse.gaussian(link="1/mu^2"),data=df)
+summary(reg.invgaus)
+```
+
+## Modèles écrêtement et sélection de variables :
+Nous optons pour un modèle par écrêtement par souci de simplicité par la suite. Nous allons dans cette partie procéder à une sélection de variables par Stepwise AIC et comparer les modèles obtenue en sortie. 
+
+Nous comparons les résultats de 3 modèles : en particulier, nous remarquerons que les variables sélectionnées sont régulièrement les mêmes, peu importe la méthode.
+Finalement, nous retiendrons la méthode stepwise qui fournit des résultats similaires à la méthode backward mais semble plus précautionneuse. Nous devons tout de même relever que les améliorations sur l'AIC sont marginales !
+Les variables retenues sont souvent assez similaires. Nous remarquons que certaines variables peuvent êtres présents à la fois en groupe et en continue, nous conservons manuellement l'une d'entre elle seulement. 
+## Modèle Gamma {.tabset}
+### Backward Selection
+```{r, results='hide'}
+reg.gamma.full <- glm(surcrete~.,family=Gamma(link="log"),data=subset(df, select= -c(claim_amount))) #do not keep claim amount ! 
+gamma_backward <- step(reg.gamma.full, direction = 'backward')
+summary(gamma_backward)
+```
+
+### Forward Selection
+```{r, results='hide'}
+reg.gamma.zero <- glm(surcrete~1,family=Gamma(link="log"),data=na.omit(subset(df, select= -c(claim_amount)))) #do not keep claim amount ! 
+
+gamma_forward <- step(reg.gamma.zero, scope = list(lower=formula(reg.gamma.zero),upper=formula(reg.gamma.full)), direction = 'forward')
+
+summary(gamma_forward)
+```
+
+### Stepwise selection full model
+```{r, results='hide'}
+gamma_stepwise <- step(reg.gamma.full, direction = 'both')
+
+summary(gamma_stepwise)
+```
+
+
+
+
+
+## Stepwise for Lognormal and Inverse Gaussian {.tabset}
+
+### Inverse Gaussian stepwise 
+
+```{r, warning=FALSE, results='hide'}
+
+reg.invgaus.full <- glm(surcrete~. ,family=inverse.gaussian(link="1/mu^2"),data=na.omit(subset(df, select=-c(claim_amount))))
+
+invgaus_stepwise <- step(reg.invgaus.full, direction = 'both')
+#summary(reg.invgaus)
+```
+
+```{r}
+summary(invgaus_stepwise)
+```
+
+### lognormal stepwise 
+```{r, results='hide'}
+reg.logn.full <- lm(log(surcrete) ~. , data=na.omit(subset(df, select=-c(claim_amount))))
+logn_stepwise <- step(reg.logn.full, direction = 'both')
+```
+
+
+```{r}
+summary(logn_stepwise)
+```
+
+## Compare Models with same variables {.tabset}
+### Lognormal
+```{r}
+reg.logn <- lm(formula = log(surcrete) ~ drv_age1 + vh_ageG + vh_dinG +
+    vh_type + pol_bonus + pol_durationG + pol_coverageG, data =df)
+
+summary(reg.logn)
+
+perf_model <- function(model){
+  return(list("AIC"= AIC(model), "BIC"= BIC(model), "log-vraisemblance" = logLik(model), "Deviance" =model$deviance, "Null dev." = model$null.deviance))
+}
+
+list("AIC"= AIC(reg.logn), "BIC"= BIC(reg.logn), "log-vraisemblance" = logLik(reg.logn))
+```
+
+### Gamma
+```{r}
+reg.gamma <- glm(surcrete~ drv_age1 + vh_ageG + vh_dinG +
+    vh_type + pol_bonus + pol_durationG + pol_coverageG ,family=Gamma(link="log"),data=df)
+
+perf_model(reg.gamma)
+```
+### Log gamma 
+```{r}
+reg.loggamma <- glm(log(surcrete)~ drv_age1 + vh_ageG + vh_dinG +
+    vh_type + pol_bonus + pol_durationG + pol_coverageG ,family=Gamma(link='identity'),data=df)
+perf_model(reg.loggamma)
+```
+
+
+### Inverse Gaussian
+```{r}
+reg.invgaus <- glm(formula = surcrete ~ drv_age1 + vh_ageG + vh_dinG +
+    vh_type + pol_bonus + pol_durationG + pol_coverageG, family = inverse.gaussian(link = "log"), start=coefficients(reg.gamma), data = subset(df, select = -c(claim_amount)))
+summary(reg.invgaus)
+
+perf_model(reg.invgaus)
+#df$prediction<-p
+```
+## Residuals study
+```{r}
+plotgroupresiduals <- function(object, m=100, trim=TRUE, main=NULL, ...)
+{ 
+  ifelse(object %in% c(reg.loggamma,reg.logn), yh <- exp(fitted.values(object)), yh <- fitted.values(object))
+  re <- residuals(object)
+  if(trim)
+    ind <- abs(re) <= quantile(abs(re), probs=.99) & abs(yh) <= quantile(abs(yh), probs=.99)
+  else
+    ind <- 1:length(re)
+  yh <- yh[ind]
+  re <- re[ind]
+  
+  n <- length(yh)
+  ind <- sample(1:n, n)
+  yh <- yh[ind]
+  re <- re[ind]
+  
+  #group
+  if(m > 1)
+  {
+    yhg <- rowMeans(matrix(yh, ncol=m))
+    reg <- rowMeans(matrix(re, ncol=m))
+    plot(yhg, reg, ylab = "Group residuals", xlab="Group fitted values", main=main, ...)
+  }else
+    plot(yh, re, ylab = "Residuals", xlab="Fitted values", main=main, ...)
+  abline(h=0, lty=3, col="grey")
+}
+par(mfrow=c(2,2))
+plotgroupresiduals(reg.invgaus, m=1, main = "Inverse Gaussian", trim = F)
+plotgroupresiduals(reg.logn, m=1, main ="Lognormal" , trim = F)
+plotgroupresiduals(reg.gamma, m=1, main = "Gamma", trim = F)
+plotgroupresiduals(reg.loggamma, m=1, main = 'Loggamma', trim = F)# Pas besoin de paquet car ccompare des résidus à des prédictions continues 
+```
+## Mean prediction by classes 
+```{r}
+df$prediction <- predict(reg.invgaus, type ='response')
+df$drv_age2G <- cut(df$drv_age1, c(17, 25, 45,100))
+fig1 <-  plot_ly(data =df, x = ~drv_age2G, y = ~claim_amount, type = "box", name = 'Boxplot Observed values') %>% layout(xaxis = list(title = 'Driver age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+fig2 <- plot_ly(data =df, x = ~drv_age2G, y = ~prediction, type = "box", name = 'Boxplot Inverse gaussian') %>% layout(xaxis = list(title = 'Driver age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+fig <- subplot(fig1, fig2) %>% layout(title = "Boxplot des espérance prédites par classes d'âge")
+fig
+```
+
+
+
+## New approach: age separation
+
+Par ailleurs, nous pouvons également envisager une méthode de séparation plutôt que la méthode d'écrêtement implémentée ci-dessus. Nous pourrions classer les profils de risque selon leur probabilité d'avoir des montants de sinistres élevés ou standard avec les variables explicatives à disposition. Nous montrons ci-dessous un exemple réalisé à partir de l'âge des conducteurs. 
+
+```{r séparation}
+u <- 6000
+df$standard <- (df$claim_amount<u) # 1 or TRUE if amount is less than 6000, our target 
+age <- seq(18,85)
+
+
+regC <- glm(standard~bs(drv_age1),data=df,family=binomial) #https://towardsdatascience.com/from-logistic-regression-to-basis-expansions-and-splines-74d6bb3b8dc6
+#to understand bsplines, often used in logreg when non obvious linear relation
+ypC <- predict(regC,newdata=data.frame(drv_age1=age),type="response",
+se=TRUE) #predict proba for every age
+
+plot(age,ypC$fit,ylim=c(.95,1),type="l",)
+polygon(c(age,rev(age)),c(ypC$fit+2*ypC$se.fit,rev(ypC$fit-2*ypC$se.fit)),
+col=rgb(1, 0, 0,0.5),border=NA)
+abline(h=mean(df$standard),lty=2)
+```
+
+Probabilité d'avoir un sinistre standard, étant donné qu'un sinistre est survenu, en fonction de l'âge du conducteur.
+l'âge du conducteur. Régression logistique avec un lisseur spline.
+
+
+Nous réalisons maintenant deux modèles pour chaque type de sinistres (standard ou supérieux à 6000€).
+```{r}
+indexstandard <- which(df$claim_amount<u)
+mean(df$claim_amount[indexstandard])
+mean(df$claim_amount[-indexstandard])
+
+
+regA <- glm(claim_amount~bs(drv_age1),data=df[indexstandard,], family=Gamma(link="log"))
+summary(regA)
+ypA <- predict(regA,newdata=data.frame(drv_age1=age),type="response")
+regB <- glm(claim_amount~bs(drv_age1),data=df[-indexstandard,],family=Gamma(link="log"))
+summary(regB)
+ypB <- predict(regB,newdata=data.frame(drv_age1=age),type="response")
+
+
+reg <- glm(claim_amount~bs(drv_age1),data=df,family=Gamma(link="log"))
+yp <- predict(reg,newdata=data.frame(drv_age1=age),type="response")
+
+ypC <- predict(regC,newdata=data.frame(drv_age1=age),type="response")
+plot(age,yp,type="l",lwd=2,ylab="Average cost",xlab="Age of the driver")
+lines(age,ypC*ypA+(1-ypC)*ypB,type="h",col="grey",lwd=6) 
+#expliquer la formule : prix moyen : proba de standard * prix standard + proba large montant * prix large montant
+
+lines(age,ypC*ypA,type="h",col="black",lwd=6)
+abline(h= mean(df$claim_amount),lty=2)
+```
+```{r}
+perf_model(regA)
+perf_model(regB)
+```
+
+
+La ligne horizontale représente le coût moyen d'un sinistre. La ligne sombre
+à l'arrière, est la prédiction sur l'ensemble de données. La partie sombre est la partie de la
+partie du sinistre moyen liée aux sinistres standard (inférieurs à s) et la zone plus claire est la part du sinistre moyen due à d'éventuels sinistres importants (supérieurs à s).
+
+
+

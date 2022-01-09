@@ -1,0 +1,355 @@
+---
+title: "Statistiques descriptives montant sinistres"
+author: "NO"
+date: "12/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(corrplot)
+library(gridExtra)
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(knitr)
+library(DT)
+library(pals)
+```
+
+```{r chargement_bases}
+df_claims = read.csv("../data/14OURE-PG_2017_CLAIMS_YEAR0.csv")
+df_year0 = read.csv("../data/14OURE-PG_2017_YEAR0.csv")
+df_year1 = read.csv("../data/14OURE-PG_2017_YEAR1.csv")
+
+
+df_regions = read.csv("../data/departements_francais.csv", sep = ";") %>% dplyr::select(NUMERO, REGION, "DENSITE..habitants.km2.")
+
+df_year0 = df_year0 %>% mutate(NUMERO = substr(df_year0$pol_insee_code,1,2))
+df_year0 = left_join(df_year0, df_regions, by = "NUMERO" )
+
+df_year0$DENSITE..habitants.km2. <- as.numeric(gsub(",", ".", df_year0$DENSITE..habitants.km2.)) #convert density to numeric
+names(df_year0)[names(df_year0)=="DENSITE..habitants.km2."] <- 'density'
+```
+
+Certain montants de sinistres sont négatifs : on les exclus de la base et on ne modélise alors que les montants bruts de recours. Des clients peuvent avoir plusieurs sinsitres sur le même contrat dans la même année : pour l'étude statistique du nombre de sinistre, on somme le nombre de sinistre par client. 
+
+
+# Etudes des montants de sinistres
+```{r stat_claims1}
+#df_claims[df_claims$claim_amount>300000,] #one claim greater than 300K
+df_claims_0 = df_claims[(df_claims$claim_amount >= 0),]
+#df_claims_0 = df_claims[(df_claims$claim_amount >= 0) & (df_claims$claim_amount < 300000), ] #%>% group_by(id_policy) %>% summarise(claim_nb = n(), claim_amount = sum(claim_amount))
+summary(df_claims_0$claim_amount)
+```
+
+```{r stat_claims2}
+plot1 <- plot(ecdf(df_claims_0$claim_amount), xlab = "Claim Amount", ylab = "Fn(Claim Amount)")
+plot2 <- plot(ecdf(log(df_claims_0$claim_amount)), xlab = "Log of Claim Amount", ylab = "Fn(Claim Amount)")
+```
+Nous pouvons également réaliser ces grpahiques avec plot_ly, et nous préférerons même ce package qui offre des fonctionnalités intéréssantes (zoom dynamique, résumé pointeur...).
+```{r plotly}
+
+fig1 <-plot_ly(data= arrange(df_claims_0,df_claims_0$claim_amount), x = ~claim_amount, y = ~ecdf(claim_amount)(claim_amount), type= 'scatter', mode ='lines', name ='ecdf of claim amount')
+fig2 <- plot_ly(data= arrange(df_claims_0,df_claims_0$claim_amount), x = ~log(claim_amount), y = ~ecdf(log(claim_amount))(log(claim_amount)), type= 'scatter', mode ='lines', name ='ecdf of log claim amount')
+
+fig <- subplot(fig1, fig2) %>% 
+
+  layout(title = 'Fonction de répartition empirique')
+
+fig
+```
+
+```{r merge}
+# create final merged df
+df = left_join(df_year0, df_claims_0, by = c("id_policy")) %>%
+  mutate(claim_nb = ifelse(is.na(claim_nb), 0, claim_nb), claim_amount=ifelse(is.na(claim_amount), 0, claim_amount)) 
+
+df <-  df[df$claim_amount > 0,] #keep individuals claims for modelisation
+```
+
+
+```{r boxplot claim amount}
+fig1 <- plot_ly(y = ~df$claim_amount, type = "box", name = 'boxplot of claim amount') %>% layout( yaxis = list(range = c(0,4000)))
+fig2 <- plot_ly(y = ~ log(df$claim_amount), type = "box", name= 'boxplot of log claim amount')
+fig <- subplot(fig1, fig2) %>% 
+
+  layout(title = 'Boxplot des montants et logs montants')
+fig
+```
+
+
+
+## Etudes croisées des montants et variables explicatives
+
+```{r boxplot driver age}
+plot_ly(x = df$drv_age1 ,y = ~df$claim_amount, type = "box", name = 'Boxplot against driver age',) %>% layout(title = 'Boxplot against driver age', xaxis = list(title = 'Driver age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+## Boxplot age {.tabset}
+
+### 10 years groups
+```{r category age}
+df$drv_age1G <- cut(df$drv_age1, c(17, 2:8*10, 100))
+plot_ly(data =df, x = ~drv_age1G, y = ~claim_amount, type = "box", name = 'Boxplot against driver age') %>% layout(title = 'Boxplot against driver age', xaxis = list(title = 'Driver age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+### Other groups
+```{r}
+df$drv_age2G <- cut(df$drv_age1, c(17, 25, 45,100))
+plot_ly(data =df, x = ~drv_age2G, y = ~claim_amount, type = "box", name = 'Boxplot against driver age') %>% layout(title = 'Boxplot against driver age', xaxis = list(title = 'Driver age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+## Boxplot vehicle age {.tabset}
+
+### For all ages 
+```{r}
+plot_ly(data =df, x = ~vh_age, y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle age', xaxis = list(title = 'Boxplot against Vehicle age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+### One threshold
+```{r}
+df$vh_ageG <- cut(df$vh_age, c(0, 15, 100)) #no vehicle with age 0, min value is 1 in the dataset
+plot_ly(data =df, x = ~vh_ageG, y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle age', xaxis = list(title = 'Boxplot against Vehicle age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+Nous ne distinguons pas de réelles différences, ajoutons quelques catégories.
+
+### 4 groups
+```{r}
+
+df$vh_ageG <- cut(df$vh_age, c(0, 10, 25, 30, 100)) #no vehicle with age 0, min value is 1 in the dataset
+plot_ly(data =df, x = ~vh_ageG, y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle age', xaxis = list(title = 'Boxplot against Vehicle age', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+
+## Boxplot vehicle type
+```{r boxplot vehicle type}
+plot_ly(x = df$vh_type ,y = ~df$claim_amount, type = "box", name = 'Boxplot against vehicle type')  %>% layout(title = 'Boxplot against vehicle type', xaxis = list(title = 'Vehicle type', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+##Boxplot power {.tabset}
+
+### First group
+```{r boxplot against power}
+df$vh_dinG = cut(df$vh_din, c(min(df$vh_din), 50, 220, 290, max(df$vh_din)), include.lowest = TRUE)
+plot_ly(data= df, x = ~vh_dinG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle power', xaxis = list(title = 'Vehicle power', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+#plot_ly(x = df$vh_cyl ,y = ~df$claim_amount, type = "box", name = 'Boxplot against vehicle power')
+```
+Pas beaucoup d'intérets à différencier les groupes 3 et 4. 
+
+
+### Second group
+```{r}
+
+df$vh_dinG = cut(df$vh_din, c(min(df$vh_din), 50, 220, max(df$vh_din)), include.lowest = TRUE)
+plot_ly(data= df, x = ~vh_dinG ,y = ~claim_amount, type = "box", name = 'Boxplot against vehicle power') %>% layout(title = 'Boxplot against vehicle power', xaxis = list(title = 'Vehicle power', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+## Vehicle brand {.tabset}
+### All brands 
+```{r}
+plot_ly(data= df, x = ~vh_make ,y = ~claim_amount, type = "box", name = 'Boxplot against vehicle brand') %>% layout(title = 'Boxplot against vehicle brand', xaxis = list(title = 'Vehicle brand', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+
+### Grouped brands 
+```{r}
+df$vh_makeG = ifelse(df$vh_make %in% c("RENAULT", "NISSAN", "CITROEN"), "A", 
+                              ifelse(df$vh_make %in% c("VOLKSWAGEN", "AUDI", "SKODA", "SEAT"), "B",
+                              ifelse(df$vh_make %in% c("OPEL", "GENERAL MOTORS", "FORD"), "C",
+                              ifelse(df$vh_make %in% c("FIAT"), "D",
+                              ifelse(df$vh_make %in% c("MERCEDES BENZ", "BMW", "CITROEN"), "E", "G")))))
+
+plot_ly(data= df, x = ~vh_makeG ,y = ~claim_amount, type = "box", name = 'Boxplot against vehicle brand') %>% layout(title = 'Boxplot against vehicle brand', xaxis = list(title = 'Vehicle brand groupped', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+
+## Group by vh_value {.tabset}
+### 10 groups
+```{r}
+df$vh_valueG = cut(df$vh_value, c(min(df$vh_value), 4:12*2000 , max(df$vh_value)), include.lowest = TRUE)
+plot_ly(data= df, x = ~vh_valueG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle value', xaxis = list(title = 'Region', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+
+### 4 groups 
+```{r}
+df$vh_valueG = cut(df$vh_value, c(min(df$vh_value), 8000, 15000, 22000, max(df$vh_value)), include.lowest = TRUE)
+
+plot_ly(data= df, x = ~vh_valueG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against vehicle value', xaxis = list(title = 'Region', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+## Region
+```{r}
+
+plot_ly(data= df, x = ~REGION ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against region', xaxis = list(title = 'Region', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+
+## Density 
+```{r}
+df$densityG<- cut(df$density,c(0,40,200,500,4500,Inf),
+include.lowest = TRUE)
+
+plot_ly(data= df, x = ~densityG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against density', xaxis = list(title = 'Density', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+```
+
+
+```{r}
+region_df <- df %>%  #pas concluant on peut tej 
+  group_by(REGION) %>% 
+  mutate(vh_fuel = factor(vh_fuel)) %>% 
+  summarize(NrObs = length(claim_amount),
+            VehAge = mean(vh_age),
+            DrivAge = mean(drv_age1),
+            BonusMalus = mean(pol_bonus),
+            Density = mean(density))
+knitr::kable(head(region_df, n = 10))
+```
+
+## Policy features {.tabset}
+
+### Bonus
+```{r}
+df$pol_bonusG = cut(df$pol_bonus, c(0.5, 0.9, 1.2, 1.4, max(df$pol_bonus)), include.lowest = TRUE)
+plot_ly(data= df, x = ~pol_bonusG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against Bonus', xaxis = list(title = 'Bonus', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+### Duration
+```{r}
+df$pol_durationG = cut(df$pol_duration, c(min(df$pol_duration),10, 20,25,30, max(df$pol_duration)), include.lowest = TRUE)
+
+plot_ly(data= df, x = ~pol_durationG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against policy duration', xaxis = list(title = 'Policy duration', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+
+### Coverage
+```{r}
+df$pol_coverageG = ifelse(df$pol_coverage %in% c("Median1", "Median2"), "Median", df$pol_coverage)
+
+plot_ly(data= df, x = ~pol_coverageG ,y = ~claim_amount, type = "box") %>% layout(title = 'Boxplot against policy duration', xaxis = list(title = 'Policy duration', zeroline = TRUE), yaxis = list(title = 'Claim Amount (€)',range = c(0,4000)))
+
+```
+
+
+## Intercorrelation study 
+```{r corr and aggregate amount vs claim number}
+
+mcor = cor(subset(df[, unlist(lapply(df, is.numeric))], select = -claim_nb))
+corrplot(mcor, type="upper", order="hclust", tl.col="black", tl.srt=45)
+df_sorted <- arrange(df, df$claim_amount )
+
+
+```
+L'étude de la matrice de corrélation montre que certaines variables sont très corrélées entre elles (vh_din, vh_cyl ou encore vh_value). Nous pouvons donc sélectionner parmis ces variables celles qui nous semblent les plus appropriées pour dans la régression des montants de sinistres. D'après nos boxplots, pvh_din semble porter plus d'information. 
+
+## Aggregated amount of claims vs number of claims 
+
+### Global aggregated amount 
+```{r}
+
+
+amountvsnb <- function(x, add=FALSE, horiz=FALSE, main, ...)
+{
+  n <- length(x)
+  if(missing(main))
+    main <- "aggregate amount vs. claim number"
+  if(!add)
+  {
+    z <- cumsum(sort(x))/sum(x)
+    y <- (1:n)/n
+    plot(z, y, type="l", ylim=0:1, 
+         ylab="% claim nb.", xlab="% agg. claim amount",
+         main=main, ...)
+    if(horiz)
+      abline(h=1:10/10, lty=3, col="grey")
+    else
+    for(i in 3:19)
+    {
+      p <- i/20
+    ind <- head(which(abs(y - p) < 1e-3), 1)
+    lines(c(-1, z[ind]), c(p, p), lty=2, col="grey25")
+    lines(c(z[ind], z[ind]), c(-1, p), lty=2, col="grey25")
+    print(c(p, z[ind]))
+    }
+  }else
+    lines(cumsum(sort(x))/sum(x), (1:n)/n, ...)
+  
+}
+
+amountvsnb(df$claim_amount)
+
+```
+## Aggregated amounts vs groups of policy holders {.tabset}
+```{r}
+
+amountvsnb <- function(x, add=FALSE, horiz=FALSE, main,i=1, ...)
+{ 
+  cols <- cols25()
+  x <- x[is.na(x)==0]
+  n <- length(x)
+  if(missing(main))
+    main <- "aggregate amount vs. claim number"
+  if(!add)
+  {
+    z <- cumsum(sort(x))/sum(x)
+    y <- (1:n)/n
+    plot(z, y, type="l", ylim=0:1, 
+         ylab="% claim nb.", xlab="% agg. claim amount",
+         main=main,col = cols[i],lty=2, ...)
+    if(horiz)
+      abline(h=1:10/10, lty=3, col="grey")
+    else
+      for(i in 3:19)
+      {
+        p <- i/20
+        ind <- head(which(abs(y - p) < 1e-3), 1)
+        lines(c(-1, z[ind]), c(p, p), lty=2, col="grey25")
+        lines(c(z[ind], z[ind]), c(-1, p), lty=2, col="grey25")
+        print(c(p, z[ind]))
+      }
+  }else
+    lines(cumsum(sort(x))/sum(x), (1:n)/n, col=cols[i], lty=2)
+}
+```
+
+```{r}
+amountvsnbcat <- function(x, column, main)
+{cols <- cols25()
+  # set the colour palette
+  len=length(levels(df[[column]]))
+  amountvsnb(df[df[[column]]==levels(df[[column]])[1], 'claim_amount'], horiz = TRUE, i=1, main=main)
+  for (i in 2:len){
+    amountvsnb(df[df[[column]]==levels(df[[column]])[i], 'claim_amount'], horiz = TRUE, add= TRUE, i=i)
+  } 
+  legend("bottomright", legend = levels(df[[column]]), cex = 0.8, col=cols[1:len],lty=2)
+}
+
+```
+
+### Driver age group 
+```{r}
+amountvsnbcat(df, "drv_age2G", main= "agg./nb. per Driver Age group") 
+#amountvsnbcat(df, 'Power', main= "agg./nb. per Power")
+```
+### Car age group 
+```{r}
+amountvsnbcat(df, 'vh_ageG', main= "agg./nb. per Car Age group")
+```
+
+### Fuel type 
+
+```{r}
+df$vh_fuel = factor(df$vh_fuel)
+amountvsnbcat(df, 'vh_fuel', main= "agg./nb. per Vehicle Fuel type") 
+```
+

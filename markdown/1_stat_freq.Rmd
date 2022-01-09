@@ -1,0 +1,308 @@
+---
+title: "Statistiques descriptives fréquence"
+author: "MR"
+date: "12/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(knitr)
+library(DT)
+library(plotly)
+```
+
+```{r chargement_bases}
+df_claims = read.csv("14OURE-PG_2017_CLAIMS_YEAR0.csv")
+df_year0 = read.csv("14OURE-PG_2017_YEAR0.csv")
+df_year1 = read.csv("14OURE-PG_2017_YEAR1.csv")
+```
+
+Certain montants de sinistres sont négatifs : on les exclus de la base et on ne modélise alors que les montants bruts de recours. Des clients peuvent avoir plusieurs sinsitres sur le même contrat dans la même année : pour l'étude statistique du nombre de sinistre, on somme le nombre de sinistre par client. 
+
+```{r stat_claims1}
+df_claims_0 = df_claims[df_claims$claim_amount >= 0, ] %>% group_by(id_policy) %>% summarise(claim_nb = n(), claim_amount = sum(claim_amount))
+summary(df_claims_0$claim_nb)
+```
+
+```{r stat_claims2}
+ggplot(df_claims_0, aes(claim_nb)) +
+  geom_bar(fill = 'steelblue4', width = 0.6)+
+  ggtitle("Répartiton des polices en fonction du nombre de sinistres")+
+  xlab("Nombre de sinistres") +
+  ylab("Nombre de polices") +
+  theme_minimal()
+```
+
+```{r merge}
+df = left_join(df_year0, df_claims_0, by = c("id_policy")) %>%
+  mutate(claim_nb = ifelse(is.na(claim_nb), 0, claim_nb), claim_amount=ifelse(is.na(claim_amount), 0, claim_amount))
+```
+
+
+```{r stat_elementaires}
+df %>% summary()
+
+df_pol_coverage = df %>% group_by(pol_coverage) %>% summarise(somme = n()) %>% arrange(desc(somme))
+df_pol_coverage
+
+df_vh_make = df %>% group_by(vh_make) %>% summarise(somme = n()) %>% arrange(desc(somme))
+df_vh_make[1:10,]
+
+df_vh_fuel = df %>% group_by(vh_fuel) %>% summarise(somme = n()) %>% arrange(desc(somme))
+df_vh_fuel
+
+df_vh_type = df %>% group_by(vh_type) %>% summarise(somme = n()) %>% arrange(desc(somme))
+df_vh_type
+
+df_pol_usage = df %>% group_by(pol_usage) %>% summarise(somme = n()) %>% arrange(desc(somme))
+df_pol_usage
+```
+
+
+```{r plot_age_conducteur}
+ggplot(df, aes(drv_age1)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge du conducteur et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge du conducteur") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(drv_age1)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge du conducteur et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge du conducteur") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+```{r plot_age_voiture}
+ggplot(df, aes(vh_age)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge de la voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge de la voiture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(vh_age)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge de la voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge de la voiture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+```{r plot_age_permis}
+
+ggplot(df, aes(drv_age_lic1)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge du permis de conduire et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge du permis de conduire") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(drv_age_lic1)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction de l'âge du permis de conduire et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Âge du permis de conduire") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+```{r plot_puissance}
+ ggplot(df, aes(as.character(claim_nb), vh_din, fill = as.character(claim_nb)))+ 
+   geom_boxplot() + 
+   scale_fill_brewer(palette="Blues") + 
+   theme_classic()
+```
+
+```{r plot_usage}
+ggplot(df, aes(pol_usage)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction de l'usage et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Usage de la voiture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(pol_usage)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction de l'usage et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Usage de la voiture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+```
+
+```{r plot_pol_coverage}
+ggplot(df, aes(pol_coverage)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du type de couverture  et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de couverture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(pol_coverage)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du type de couverture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de couverture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+```{r plot_pol_bonus}
+ggplot(df, aes(pol_bonus)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du type de couverture  et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de couverture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(pol_bonus)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du type de couverture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de couverture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+```{r plot_vh_type}
+ggplot(df, aes(vh_type)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du type de voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de voiture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(vh_type)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du type de voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de voiture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+
+```{r plot_vh_make}
+
+ggplot(df[df$vh_make %in% df_vh_make[1:10,]$vh_make, ], aes(vh_make)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du constructeur et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Constructeur") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(df[df$vh_make %in% df_vh_make[1:10,]$vh_make, ], aes(vh_make)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du constructeur et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Constructeur") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r plot_vh_fuel}
+ggplot(df, aes(vh_fuel)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du type de voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de voiture") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df, aes(vh_fuel)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du type de voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Type de voiture") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+
+```{r plot_vh_weight}
+ggplot(df[!df$vh_weight %in% boxplot.stats(df$vh_weight)$out,], aes(vh_weight)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "stack")+
+
+  ggtitle("Répartiton des polices en fonction du poids de la voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Poids de la voiture (kg)") +
+  ylab("Nombre de polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+
+ggplot(df[!df$vh_weight %in% boxplot.stats(df$vh_weight)$out,], aes(vh_weight)) +
+  geom_bar(aes(fill = as.character(claim_nb)), position = "fill")+
+
+  ggtitle("Répartiton des polices en fonction du poids de la voiture et du nombre de sinistres")+
+  scale_fill_brewer() +
+  xlab("Poids de la voiture (kg)") +
+  ylab("Proportions des polices") +
+  guides(fill = guide_legend(title = "Nombre de sinistres")) +
+  theme_minimal()
+```
+
+
+
+

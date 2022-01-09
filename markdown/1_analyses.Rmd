@@ -1,0 +1,344 @@
+---
+title: "Statistiques descriptives fréquence"
+author: "MR"
+date: "12/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r packages, echo=FALSE}
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(knitr)
+library(DT)
+library(plotly)
+library(rgdal)
+library(gridExtra)
+library(corrplot)
+```
+
+```{r chargement_bases}
+df_claims = read.csv("../data/14OURE-PG_2017_CLAIMS_YEAR0.csv")
+df_year0 = read.csv("../data/14OURE-PG_2017_YEAR0.csv")
+df_year1 = read.csv("../data/14OURE-PG_2017_YEAR1.csv")
+```
+
+```{r regions}
+df_regions = read.csv("../data/departements_francais.csv", sep = ";") %>% dplyr::select(NUMERO, REGION)
+df_year0 = df_year0 %>% mutate(NUMERO = substr(df_year0$pol_insee_code,1,2))
+df_year0 = left_join(df_year0, df_regions, by = "NUMERO" )
+```
+
+Certain montants de sinistres sont négatifs : on les exclus de la base et on ne modélise alors que les montants bruts de recours. Des clients peuvent avoir plusieurs sinsitres sur le même contrat dans la même année : pour l'étude statistique du nombre de sinistre, on somme le nombre de sinistre par client. 
+
+```{r df}
+# construction de la base df, résulte de la jointure entre df_year0 et df_claims amputée des sinistres aux montants négatifs
+
+df_claims_0 = df_claims[df_claims$claim_amount > 0, ] %>% group_by(id_policy) %>% summarise(claim_nb = n(), claim_amount = sum(claim_amount))
+
+df = left_join(df_year0, df_claims_0, by = c("id_policy")) %>%
+  mutate(claim_nb = ifelse(is.na(claim_nb), 0, claim_nb), claim_amount = ifelse(is.na(claim_amount), 0, claim_amount))
+```
+
+## 1. Statistiques descriptives - Fréquence {.tabset .tabset-fade}
+
+### Description des données 
+
+```{r stat_claims}
+ggplot(df, aes(claim_nb)) +
+  geom_bar(fill = 'steelblue4', width = 0.6)+
+  ggtitle("Répartiton des polices en fonction du nombre de sinistres")+
+  xlab("Nombre de sinistres") +
+  ylab("Nombre de polices") +
+  theme_minimal()
+```
+
+
+
+```{r stat_elementaires}
+kable(summary(df %>% dplyr::select(claim_nb, drv_age1, drv_age_lic1, vh_age, vh_cyl, vh_din, vh_speed, vh_value, vh_weight, pol_bonus)))
+
+df_pol_coverage = df %>% group_by(pol_coverage) %>% summarise(somme = n()) %>% arrange(desc(somme))
+kable(df_pol_coverage)
+
+df_vh_make = df %>% group_by(vh_make) %>% summarise(somme = n()) %>% arrange(desc(somme))
+kable(df_vh_make[1:10,])
+
+df_vh_fuel = df %>% group_by(vh_fuel) %>% summarise(somme = n()) %>% arrange(desc(somme))
+kable(df_vh_fuel)
+
+df_vh_type = df %>% group_by(vh_type) %>% summarise(somme = n()) %>% arrange(desc(somme))
+kable(df_vh_type)
+
+df_pol_usage = df %>% group_by(pol_usage) %>% summarise(somme = n()) %>% arrange(desc(somme))
+kable(df_pol_usage)
+
+df_region = df %>% group_by(REGION) %>% summarise(somme = n()) 
+kable(df_region)
+```
+ 
+
+
+### Matrices de corrélation 
+
+Les variables suivantes sont retenues. 
+Pour la police :
+* pol_coverage
+* pol_bonus
+* pol_duration
+* pol_usage 
+* REGION
+* drv_age1
+* drv_age_lic1
+
+Pour le véhicule : 
+* vh_age
+* vh_cyl
+* vh_din
+* vh_fuel
+* vh_make
+* vh_speed
+* vh_type
+* vh_value
+* vh_weight
+* vh_type
+
+Pour les variables numériques, l'étude des corrélations permet de faire une première sélection pour la suite de l'analyse puis pour les modèles de fréquence. 
+
+```{r}
+df_cor = df %>% 
+  select(vh_age, vh_cyl, vh_din,  vh_speed, vh_value, vh_weight,claim_nb, claim_amount) 
+M <- round(cor(df_cor, method = "pearson"), 2)
+knitr::kable(M)
+corrplot(M, method = "color")
+
+df_cor = df %>% 
+  select(pol_bonus, pol_duration, drv_age1,  drv_age_lic1, claim_nb, claim_amount) 
+M <- round(cor(df_cor, method = "pearson"), 2)
+knitr::kable(M)
+corrplot(M, method = "color")
+```
+
+Les variables numériques sélectionnées pour la suite sont les suivantes :  vh_age, vh_value, vh_din, pol_bonus, pol_duration, drv_age1. 
+Les variables catégorielles étudiées dans la suite sont : vh_fuel, vh_make, vh_type, pol_coverage, pol_usage, REGION
+
+
+
+### Statistiques autour de la police et du conducteur
+
+Cette partie de visualisation statistique permet d'observer les éventuels liens de nos variables avec le nombre de sinistres. Elle permet également de construire des classes de risques homogènes pour chacune des variables. La légende des abscisses de certains graphiques se sont pas lisibles mais ces derniers permettent la construction pertinente de classes.  
+
+```{r plot_func}
+plot_func = function(data, var, legx, title){
+  
+plot1 = ggplot(data, aes(var)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "stack")+
+  ggtitle(title)+
+  scale_fill_brewer() +
+  xlab(legx) +
+  ylab("Nombre") +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "Nombre sinistres")) +
+  theme(legend.position = c(0.85, 0.85), legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8), legend.key.size = unit(0.4, "cm"),
+        legend.key.width = unit(0.4,"cm"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot2 = ggplot(data, aes(var)) +
+  geom_bar(aes(fill = as.character(claim_nb)), width = 0.6, position = "fill")+
+
+  ggtitle(title)+
+  scale_fill_brewer() +
+  xlab(legx) +
+  ylab("Fréquence") + 
+  theme_minimal()+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(plot1, plot2, ncol=2) 
+  
+}
+```
+
+
+
+```{r plot_drvage}
+title = "Âge des conducteurs et sinistres"
+legx = "Âge du conducteur"
+plot_func(df, df$drv_age1, legx, title)
+```
+Aucune tendance générale ne se dessine, la variable de l'âge du conducteur sera dans la suite considérée par intervalles de 5 ans. 
+
+```{r plot_drvage2}
+title = "Âge des conducteurs et sinistres"
+legx = "Âge du conducteur"
+df$drv_age1G = cut(df$drv_age1, c(min(df$drv_age1), 4:18*5, max(df$drv_age1)), include.lowest = TRUE)
+plot_func(df, df$drv_age1G, legx, title)
+```
+
+```{r plot_vhage}
+title = "Âge de la voiture et sinistres"
+legx = "Âge de la voiture"
+plot_func(df, df$vh_age, legx, title)
+```
+Nous pouvons oberver un lien plus net entre l'âge de la voiture et le nombre de sinistres, des classes de cinq ans sont construites. 
+
+```{r plot_vhage2}
+title = "Âge de la voiture et sinistres"
+legx = "Âge de la voiture"
+df$vh_age2 = cut(df$vh_age, c(min(df$vh_age), 1:12*5, max(df$vh_age)), include.lowest = TRUE)
+plot_func(df, df$vh_age2, legx, title)
+```
+
+
+```{r plot_poldur}
+title = "Durée de la police et sinistres"
+legx = "Durée de la police"
+plot_func(df, df$pol_duration, legx, title)
+```
+La fréquence de sinistre est légèrement décroissante avec la durée de la police, des classes de 5 ans sont construites. 
+
+```{r plot_poldur2}
+title = "Durée de la police et sinistres"
+legx = "Durée de la police"
+df$pol_durationG = cut(df$pol_duration, c(min(df$pol_duration), 1:7*5, max(df$pol_duration)), include.lowest = TRUE)
+plot_func(df, df$pol_durationG, legx, title)
+```
+```{r plot_vh_type}
+title = "Type du véhicule et sinistres"
+legx = "Type du véhicule"
+plot_func(df, df$vh_type, legx, title)
+```
+
+```{r plot_pol_bonus}
+title = "Bonus et sinistres"
+legx = "Bonus"
+plot_func(df, as.character(df$pol_bonus), legx, title)
+```
+
+Les bonus sont regroupés selon des classes d'invertalle 0,1. 
+
+```{r plot_pol_bonus2.1}
+title = "Bonus et sinistres"
+legx = "Bonus"
+df$pol_bonusG = cut(df$pol_bonus, c( 5:16*(1/10), max(df$pol_bonus)), include.lowest = TRUE)
+plot_func(df, as.character(df$pol_bonusG), legx, title)
+
+```
+
+La présence d'un deuxième conducteur dans le contrat ne semble pas avoir une influence sur la fréquence des sinistres. 
+```{r plot_drv2}
+title = "Présence d'un deuxième conducteur"
+legx = "Deuxième conducteur"
+plot_func(df, df$drv_drv2, legx, title)
+
+```
+Des disparités de fréquence de sinistres sont observées entre les différentes régions.
+```{r plot_region}
+title = "Région et sinistres"
+legx = "Région"
+plot_func(df, df$REGION, legx, title)
+```
+
+### Statistiques autour de la voiture
+
+
+```{r plot_vh_value2}
+title = "Valeur de la voiture et sinistres"
+legx = "Valeur de la voiture"
+df$vh_valueG = cut(df$vh_value, c(min(df$vh_value), 1:150*1000, max(df$vh_value)), include.lowest = TRUE)
+
+plot_func(df, df$vh_valueG, legx, title)
+```
+Les classes construites permettent la visualition de l'augmentation de la fréquence avec la valeur de la voiture.  
+```{r plot_vh_value2.1}
+title = "Valeur de la voiture et sinistres"
+legx = "Valeur de la voiture"
+df$vh_valueG = cut(df$vh_value, c(min(df$vh_value), 6000, 10000, 15000, 20000, max(df$vh_value)), include.lowest = TRUE)
+plot_func(df, df$vh_valueG, legx, title)
+```
+
+
+```{r plot_vh_dyn2.1}
+title = "Puissance de la voiture et sinistres"
+legx = "Puissance de la voiture"
+df$vh_dinG = cut(df$vh_din, c(min(df$vh_din), 2:50*10 , max(df$vh_din)))
+plot_func(df, df$vh_dinG, legx, title)
+```
+
+Les classes suivantes sont construites pour la puissance de la voiture. 
+```{r plot_vh_dyn2}
+title = "Puissance de la voiture et sinistres"
+legx = "Puissance de la voiture"
+df$vh_dinG = cut(df$vh_din, c(min(df$vh_din), 50, 220, 290, max(df$vh_din)), include.lowest = TRUE)
+df$vh_dinG2 = cut(df$vh_din, c(min(df$vh_din), quantile(df$vh_din, 0.25) ,quantile(df$vh_din, 0.5) , quantile(df$vh_din, 0.75) , max(df$vh_din)), include.lowest = TRUE)
+plot_func(df, df$vh_dinG, legx, title)
+```
+
+
+L'alimentation de la voiture est également un facteur pour la fréquence de sinistre.  
+```{r plot_vh_fuel}
+title = "Alimentation de la voiture et sinistres"
+legx = "Alimentation"
+plot_func(df, df$vh_fuel, legx, title)
+```
+
+```{r plot_pol_coverage}
+title = "Type de couverture et sinistres"
+legx = "Type de couverture"
+plot_func(df, df$pol_coverage, legx, title)
+```
+
+Dans la suite, on regroupe les catégories Median1 et Median2 dans une seule catégorie.
+```{r plot_pol_coverage2}
+title = "Type de couverture et sinistres"
+legx = "Type de couverture"
+df$pol_coverageG = ifelse(df$pol_coverage %in% c("Median1", "Median2"), "Median", df$pol_coverage)
+plot_func(df, df$pol_coverageG, legx, title)
+```
+
+```{r plot_pol_usage}
+title = "Usage de la voiture et sinistres"
+legx = "Usage"
+plot_func(df, df$pol_usage, legx, title)
+```
+Nous ne distinguons plus que la catégorie Professional. 
+```{r plot_pol_usage2}
+title = "Usage de la voiture et sinistres"
+legx = "Usage"
+df$pol_usageG = ifelse(df$pol_usage == "Professional", "Professional", "Other")
+plot_func(df, df$pol_usageG, legx, title)
+```
+
+```{r plot_vh_make1}
+title = "Principaux constructeurs et sinistres"
+legx = "Constructeurs"
+plot_func(df[df$vh_make %in% df_vh_make[1:10,]$vh_make, ], df[df$vh_make %in% df_vh_make[1:10,]$vh_make, ]$vh_make, legx, title)
+```
+Les constructeurs sont répartis dans différentes classes sous le même format que dans le cours (à l'execption que les véhicules coréens et japonais sont classés dans la catégorie G). 
+```{r plot_vh_make}
+title = "Constructeur et sinistres"
+legx = "Constructeur"
+df$vh_makeG = ifelse(df$vh_make %in% c("RENAULT", "NISSAN", "CITROEN"), "A", 
+                              ifelse(df$vh_make %in% c("VOLKSWAGEN", "AUDI", "SKODA", "SEAT"), "B",
+                              ifelse(df$vh_make %in% c("OPEL", "GENERAL MOTORS", "FORD"), "C",
+                              ifelse(df$vh_make %in% c("FIAT"), "D",
+                              ifelse(df$vh_make %in% c("MERCEDES BENZ", "BMW", "CITROEN"), "E", "G")))))
+plot_func(df, df$vh_makeG, legx, title)
+
+```
+
+
+
+
+```{r}
+liste_regions_txbas = c("Provence-Alpes-Côte d'Azur","Occitanie", "Normandie", "Grand Est", "Corse" )
+liste_vh_make_txhaut = c("TOYOTA","MERCEDES BENZ", "NISSAN", "VOLKSWAGEN")
+```
+
+
