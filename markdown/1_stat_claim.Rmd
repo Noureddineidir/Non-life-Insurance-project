@@ -1,6 +1,6 @@
 ---
 title: "Statistiques descriptives montant sinistres"
-author: "NO"
+author: "Noureddine Oulid Azouz, Margaux Regnault"
 date: "12/24/2021"
 output: html_document
 ---
