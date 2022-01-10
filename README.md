@@ -1,5 +1,5 @@
 # Non-life-Insurance-project
-## Auto Insurance Pricing
+## Auto Insurance Pricing with R
 
 This repo covers a non-life insurance assignement for ENSAE courses. The instructions are given [here](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/8018d867cb5fb83720031870876c719ee6952578/consignes/Instruction-Projet.pdf). Data comes from the Third Actuarial Pricing Game. For more information on the data available and the context of the competition, please refer to [this document](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/8018d867cb5fb83720031870876c719ee6952578/consignes/3rdPricingGame.pdf).
 
