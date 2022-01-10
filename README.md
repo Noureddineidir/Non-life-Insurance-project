@@ -27,7 +27,9 @@ Before calibrating models, descriptive statistics, features selection and models
 
 The HTML files are the following :
 * [1_stat_claim.html](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/2aa8ffc269c297a88108a66683da14e4fd722003/1_stat_claim.html) with descriptive statistices of claim with respect to various features, this study helped to offer group categorization. 
+* [1_stat_freq.html](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/50d9c584a0facdb58ed511536dccb1f6443e1e95/1_stat_freq.html) is the same for frequency.
 * [2_reg_claim.html](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/2aa8ffc269c297a88108a66683da14e4fd722003/2_reg_claim.html) gathers the full study of claims regressions (first model exploration, capping or "écrêtement", stepwise feature selection, models comparison and finally simple approach by age separation for standards and large claims).
+* [2_reg_freq.html](https://github.com/Noureddineidir/Non-life-Insurance-project/blob/8a8e991735d184d1afde0aa8f2ab5ae9cf92f6f8/2_reg_freq.html) is the same for frequency (explore different models) 
 
 ## Data 
  
