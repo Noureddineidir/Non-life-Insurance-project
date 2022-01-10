@@ -13,7 +13,8 @@ library(splines)
 library(MASS)
 library(xtable)
 
-setwd(getwd()) #set as working directory 
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) #set as working directory 
+#setwd(getwd()) 
 #######################################################################################################
 ### 1. Calibration des modèles et visualisation des résultats
 source('1_calibr_reg_frequence.R') #fréquence
