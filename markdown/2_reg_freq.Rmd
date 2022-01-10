@@ -1,6 +1,6 @@
 ---
 title: "Modélisation de la fréquence"
-author: "Noureddine Oulid-Azouz, Margaux Regnault"
+author: "Noureddine Oulid Azouz, Margaux Regnault"
 date: ""
 output: html_document
 ---
