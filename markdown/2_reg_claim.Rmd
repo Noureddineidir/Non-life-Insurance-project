@@ -149,8 +149,8 @@ summary(reg.logn)
 reg.gamma <- glm(surcrete~drv_age1 + vh_ageG +vh_value + pol_durationG  ,family=Gamma(link="log"),data=df)
 summary(reg.gamma)
 
-reg.invgaus <- glm(surcrete~drv_age1 + vh_ageG +vh_value + pol_durationG  ,family=inverse.gaussian(link="1/mu^2"),data=df)
-summary(reg.invgaus)
+reg.invgaus <- glm(surcrete~drv_age1 + vh_ageG +vh_value + pol_durationG  ,family=inverse.gaussian(link="log"),data=df, start = coefficients(reg.gamma))
+#summary(reg.invgaus)
 ```
 
 ## Modèles écrêtement et sélection de variables :
@@ -193,7 +193,7 @@ summary(gamma_stepwise)
 
 ```{r, warning=FALSE, results='hide'}
 
-reg.invgaus.full <- glm(surcrete~. ,family=inverse.gaussian(link="1/mu^2"),data=na.omit(subset(df, select=-c(claim_amount))))
+reg.invgaus.full <- glm(surcrete~. ,family=inverse.gaussian(link="log") ,data=na.omit(subset(df, select=-c(claim_amount))))
 
 invgaus_stepwise <- step(reg.invgaus.full, direction = 'both')
 #summary(reg.invgaus)
