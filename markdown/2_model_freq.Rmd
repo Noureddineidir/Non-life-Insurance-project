@@ -1,0 +1,317 @@
+---
+title: "Modélisation de la fréquence"
+author: "Noureddine Oulid-Azouz, Margaux Regnault"
+date: ""
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE,warning=FALSE,message=FALSE,error=FALSE)
+```
+
+```{r packages, echo=FALSE,warning=FALSE,message=FALSE,error=FALSE}
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(knitr)
+library(DT)
+library(plotly)
+library(rgdal)
+library(gridExtra)
+library(corrplot)
+library(MASS)
+library(pscl)
+library(xtable)
+```
+
+```{r chargement_bases}
+df_claims = read.csv("14OURE-PG_2017_CLAIMS_YEAR0.csv")
+df_year0 = read.csv("14OURE-PG_2017_YEAR0.csv")
+df_year1 = read.csv("14OURE-PG_2017_YEAR1.csv")
+
+df_regions = read.csv("departements_francais.csv", sep = ";") %>% dplyr::select(NUMERO, REGION)
+df_year0 = df_year0 %>% mutate(NUMERO = substr(df_year0$pol_insee_code,1,2))
+df_year0 = left_join(df_year0, df_regions, by = "NUMERO")
+
+df_claims_0 = df_claims[df_claims$claim_amount > 0, ] %>% group_by(id_policy) %>% summarise(claim_nb = n(), claim_amount = sum(claim_amount))
+
+df = left_join(df_year0, df_claims_0, by = c("id_policy")) %>%
+  mutate(claim_nb = ifelse(is.na(claim_nb), 0, claim_nb), claim_amount = ifelse(is.na(claim_amount), 0, claim_amount)) %>%
+  rename(pol_region = REGION)
+```
+
+
+```{r categorisation}
+df$drv_age1G = cut(df$drv_age1, c(19, 4:18*5, 104), include.lowest = TRUE)
+df$vh_ageG = cut(df$vh_age, c(1, 1:12*5, 67), include.lowest = TRUE)
+df$pol_durationG = cut(df$pol_duration, c(1, 1:7*5, 42), include.lowest = TRUE)
+df$pol_bonusG = cut(df$pol_bonus, c( 5:16*(1/10), max(df$pol_bonus)), include.lowest = TRUE)
+df$vh_valueG = cut(df$vh_value, c(0, 6000, 10000, 15000, 20000, Inf), include.lowest = TRUE)
+df$vh_dinG = cut(df$vh_din, c(13, 50, 220, 290, 555), include.lowest = TRUE)
+df$pol_coverageG = ifelse(df$pol_coverage %in% c("Median1", "Median2"), "Median", df$pol_coverage)
+df$vh_makeG = ifelse(df$vh_make %in% c("RENAULT", "NISSAN", "CITROEN"), "A", 
+                     ifelse(df$vh_make %in% c("VOLKSWAGEN", "AUDI", "SKODA", "SEAT"), "B",
+                            ifelse(df$vh_make %in% c("OPEL", "GENERAL MOTORS", "FORD"), "C",
+                                   ifelse(df$vh_make %in% c("FIAT"), "D",
+                                          ifelse(df$vh_make %in% c("MERCEDES BENZ", "BMW", "CHRYSLER"), "E", "G")))))
+df$pol_usageG = ifelse(df$pol_usage == "Professional", "Professional", "Other")
+```
+
+## {.tabset .tabset-fade}
+### Poisson et stepAIC
+
+On réalise premièrement une régression poisson avec fonction de lien log. On modélise claim_nb avec toutes les variables, on réalise ensuite un step AIC qui permet de faire une sélection plus parcimonieuse. 
+
+##### Régression Poisson avec toutes les variables explicatives sélectionnées par l'analyse statistique
+
+```{r poisson}
+fpois1 = glm(claim_nb ~ drv_age1G + vh_ageG + pol_durationG +  vh_makeG + vh_valueG + vh_dinG 
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel + pol_region, family = poisson("log"), data = df)
+summary(fpois1)
+
+print("log-vraisemblance")
+logLik(fpois1)
+print("AIC") 
+AIC(fpois1)
+print("BIC")
+BIC(fpois1)
+print("déviance")
+deviance(fpois1)
+```
+
+#####  Sélection de variables : stepAIC
+
+Le stepAIC permet de faire une sélection de variables. Le modèle ne retient pas le constructeur du véhicule et la région e retient :
+
+* drv_age1G
+* vh_ageG
+* pol_durationG
+* vh_valueG
+* vh_dinG
+* pol_bonusG
+* pol_coverageG
+* pol_usage
+* vh_fuel
+
+```{r poissonAIC}
+
+modselect.fpois1 = stepAIC(fpois1, trace = TRUE, direction=c("both"))
+summary(modselect.fpois1)
+
+print("log-vraisemblance")
+logLik(modselect.fpois1)
+print("AIC") 
+AIC(modselect.fpois1)
+print("BIC")
+BIC(modselect.fpois1)
+print("déviance")
+deviance(modselect.fpois1)
+```
+
+##### Régression quasi Poisson
+```{r quasipoi}
+fquasipoisson = glm(claim_nb ~ drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel, data=df, quasipoisson)
+summary(fquasipoisson)
+
+print("log-vraisemblance")
+logLik(fquasipoisson)
+print("AIC") 
+AIC(fquasipoisson)
+print("BIC")
+BIC(fquasipoisson)
+print("déviance")
+deviance(fquasipoisson)
+```
+
+### Régression binomiale négative
+#####  Avec theta estimé
+```{r binom_neg1}
+fnb1 = glm.nb(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel, data = df)
+summary(fnb1)
+
+print("log-vraisemblance")
+logLik(fnb1)
+print("AIC") 
+AIC(fnb1)
+print("BIC")
+BIC(fnb1)
+print("déviance")
+deviance(fnb1)
+```
+
+##### Avec theta fixe
+###### Estimation du theta
+
+
+
+```{r}
+df_meanvar1 = df %>% group_by(drv_age1) %>%
+  summarise(mean = mean(claim_nb), var = var(claim_nb))
+lm.meanvar1 <- lm(df_meanvar1$var ~ 0 + df_meanvar1$mean)
+summary(lm.meanvar1)
+
+plot1 = ggplot(df_meanvar1, aes(mean, var)) +
+  geom_point() +
+ geom_abline( slope = 1.04353 ) +
+  ggtitle("drv_age1")
+
+df_meanvar2 = df %>% group_by(vh_age) %>%
+  summarise(mean = mean(claim_nb), var = var(claim_nb))
+lm.meanvar2 <- lm(df_meanvar2$var ~ 0 + df_meanvar2$mean)
+summary(lm.meanvar2)
+
+plot2 = ggplot(df_meanvar2, aes(mean, var)) +
+  geom_point() +
+ geom_abline( slope = 1.068834 ) +
+  ggtitle("vh_age")
+
+df_meanvar3 = df %>% group_by(vh_din) %>%
+  summarise(mean = mean(claim_nb), var = var(claim_nb))
+lm.meanvar3 <- lm(df_meanvar3$var ~ 0 + df_meanvar3$mean)
+summary(lm.meanvar3)
+
+plot3 = ggplot(df_meanvar3, aes(mean, var)) +
+  geom_point() +
+ geom_abline(slope = 1.1685) +
+  ggtitle("vh_din")
+
+df_meanvar4 = df %>% group_by(vh_value) %>%
+  summarise(mean = mean(claim_nb), var = var(claim_nb))
+lm.meanvar4 <- lm(df_meanvar4$var ~ 0 + df_meanvar4$mean)
+summary(lm.meanvar4)
+
+plot4 = ggplot(df_meanvar4, aes(mean, var)) +
+  geom_point() +
+ geom_abline(slope = 1.17907) +
+  ggtitle("vh_value")
+
+grid.arrange(plot1, plot2, plot3, plot4, ncol=2, nrow = 2) 
+```
+
+Au vu de ces graphiques, nous choisissons de calculer le $\theta$ sur la variable vh_age où la relation linéaire entre la moyenne et la variance des sinistres est la plus nette. 
+
+```{r estim_theta}
+df_theta2 = df %>% group_by(vh_age) %>%
+  summarise(m = mean(claim_nb), s = var(claim_nb))
+
+y = df_theta2$s - df_theta2$m
+x = df_theta2$m^2
+lm.theta2 <- lm(y ~ 0 + x)
+summary(lm.theta2)
+
+```
+
+
+###### Régression
+
+```{r binomneg2}
+phi = 1/0.53477
+fnb4 = glm(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel, 
+              family = negative.binomial(phi), data = df)
+summary(fnb4)
+
+print("log-vraisemblance")
+logLik(fnb4)
+print("AIC") 
+AIC(fnb4)
+print("BIC")
+BIC(fnb4)
+print("déviance")
+deviance(fnb4)
+# predict(fnb4, df, type="response")
+#xtable(coef(summary(fnb4)), digits=3)
+```
+
+
+### Régressions zero-inflatées
+
+##### Poisson
+
+```{r poiszi1}
+fpoiszi1 <- zeroinfl(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel,   data = df, dist = 'poisson', link = 'logit')
+
+summary(fpoiszi1)
+
+print("log-vraisemblance")
+logLik(fpoiszi1)
+print("AIC") 
+AIC(fpoiszi1)
+print("BIC")
+BIC(fpoiszi1)
+print("déviance")
+deviance(fpoiszi1)
+```
+
+
+##### Binomiale négative
+
+
+```{r nbzi1}
+fnbzi1 <- zeroinfl(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel,   data = df, dist = 'negbin', link = 'logit')
+
+summary(fnbzi1)
+
+print("log-vraisemblance")
+logLik(fnbzi1)
+print("AIC") 
+AIC(fnbzi1)
+print("BIC")
+BIC(fnbzi1)
+print("déviance")
+deviance(fnbzi1)
+
+```
+
+
+### Régressions zero-modifiées
+
+##### Poisson
+
+```{r poiszm1}
+fpoiszm1 <- hurdle(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel,   data = df, dist = 'poisson', link = 'logit')
+
+summary(fpoiszm1)
+
+print("log-vraisemblance")
+logLik(fpoiszm1)
+print("AIC") 
+AIC(fpoiszm1)
+print("BIC")
+BIC(fpoiszm1)
+print("déviance")
+deviance(fpoiszm1)
+
+```
+
+
+##### Binomiale négative
+
+
+```{r nbzm1}
+fnbzm1 <- hurdle(claim_nb ~  drv_age1G + vh_ageG + pol_durationG  + vh_valueG + vh_dinG
+              + pol_bonusG + pol_coverageG + pol_usageG + vh_fuel,   data = df, dist = 'negbin', link = 'logit')
+
+summary(fnbzm1)
+
+print("log-vraisemblance")
+logLik(fnbzm1)
+print("AIC") 
+AIC(fnbzm1)
+print("BIC")
+BIC(fnbzm1)
+print("déviance")
+deviance(fnbzm1)
+
+```
+
+
+
+
