@@ -1,6 +1,6 @@
 ---
 title: "2_Reg_claim"
-author: 'NO'
+author: "Noureddine Oulid Azouz, Margaux Regnault"
 date: "05/01/2022"
 output: html_document
 ---
